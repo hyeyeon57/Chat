@@ -2,45 +2,50 @@ const allowCors = require('../_utils/cors');
 const { generateToken } = require('../_utils/auth');
 const User = require('../_utils/users');
 
-module.exports = allowCors(async (req, res) => {
+const handler = async (req, res) => {
   if (req.method !== 'POST') {
-    return res.status(405).json({ success: false, message: 'Method not allowed' });
+    res.status(405).json({ success: false, message: 'Method not allowed' });
+    return;
   }
 
   try {
     const { email, password } = req.body || {};
 
     if (!email || !password) {
-      return res.status(400).json({ 
+      res.status(400).json({ 
         success: false, 
         message: '이메일과 비밀번호를 입력해주세요.' 
       });
+      return;
     }
 
     // 사용자 찾기
     const user = await User.findByEmail(email);
     if (!user) {
-      return res.status(401).json({ 
+      res.status(401).json({ 
         success: false, 
         message: '이메일 또는 비밀번호가 올바르지 않습니다.' 
       });
+      return;
     }
 
     // 로컬 사용자가 아니거나 비밀번호가 없는 경우
     if (user.provider !== 'local' || !user.password) {
-      return res.status(401).json({ 
+      res.status(401).json({ 
         success: false, 
         message: '소셜 로그인으로 가입한 계정입니다.' 
       });
+      return;
     }
 
     // 비밀번호 확인
     const isPasswordValid = await User.comparePassword(password, user.password);
     if (!isPasswordValid) {
-      return res.status(401).json({ 
+      res.status(401).json({ 
         success: false, 
         message: '이메일 또는 비밀번호가 올바르지 않습니다.' 
       });
+      return;
     }
 
     const token = generateToken(user);
@@ -55,12 +60,18 @@ module.exports = allowCors(async (req, res) => {
         name: user.name
       }
     });
+    return;
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: '서버 오류가 발생했습니다.' 
-    });
+    if (!res.headersSent) {
+      res.status(500).json({ 
+        success: false, 
+        message: '서버 오류가 발생했습니다.',
+        error: error.message
+      });
+    }
   }
-});
+};
+
+module.exports = allowCors(handler);
 
