@@ -3,9 +3,20 @@ const { createRoom, getRoom, joinRoom } = require('../_utils/rooms');
 const pusher = require('../_utils/pusher');
 
 const handler = async (req, res) => {
-  const { path } = req.query;
-  const pathArray = Array.isArray(path) ? path : [path];
-  const route = pathArray.join('/');
+  // Vercel 동적 라우팅에서 경로 파싱
+  let route = '';
+  if (req.query.path) {
+    const pathArray = Array.isArray(req.query.path) ? req.query.path : [req.query.path];
+    route = pathArray.join('/');
+  } else if (req.url) {
+    const urlPath = req.url.split('?')[0];
+    const parts = urlPath.split('/').filter(p => p);
+    if (parts.length >= 3 && parts[0] === 'api' && parts[1] === 'rooms') {
+      route = parts.slice(2).join('/');
+    }
+  }
+  
+  console.log('Rooms Route:', route, 'Method:', req.method, 'URL:', req.url);
 
   // 방 생성
   if (route === 'create' && req.method === 'POST') {

@@ -6,9 +6,23 @@ const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
 const handler = async (req, res) => {
-  const { path } = req.query;
-  const pathArray = Array.isArray(path) ? path : [path];
-  const route = pathArray.join('/');
+  // Vercel 동적 라우팅에서 경로 파싱
+  let route = '';
+  if (req.query.path) {
+    const pathArray = Array.isArray(req.query.path) ? req.query.path : [req.query.path];
+    route = pathArray.join('/');
+  } else if (req.url) {
+    // req.url에서 경로 추출: /api/auth/register -> register
+    const urlPath = req.url.split('?')[0]; // 쿼리 제거
+    const parts = urlPath.split('/').filter(p => p);
+    // ['api', 'auth', 'register'] -> 'register'
+    // ['api', 'auth', 'kakao', 'callback'] -> 'kakao/callback'
+    if (parts.length >= 3 && parts[0] === 'api' && parts[1] === 'auth') {
+      route = parts.slice(2).join('/');
+    }
+  }
+  
+  console.log('Route:', route, 'Method:', req.method, 'URL:', req.url);
 
   // 로그인
   if (route === 'login' && req.method === 'POST') {
