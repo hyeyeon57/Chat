@@ -112,22 +112,62 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
     return peer;
   }, [roomId, userId, localStream]);
 
+  // Pusher 초기화 (한 번만 실행)
   useEffect(() => {
     if (!PUSHER_KEY) {
       console.error('Pusher key is not set');
       return;
     }
 
+    // 이미 Pusher가 연결되어 있으면 재생성하지 않음
+    if (pusherRef.current) {
+      try {
+        const state = pusherRef.current.connection.state;
+        if (state === 'connected' || state === 'connecting') {
+          // 채널만 다시 구독
+          if (channelRef.current) {
+            pusherRef.current.unsubscribe(`room-${roomId}`);
+          }
+          channelRef.current = pusherRef.current.subscribe(`room-${roomId}`);
+          return;
+        }
+      } catch (err) {
+        // 연결 상태 확인 실패 시 새로 생성
+        console.log('Pusher connection check failed, creating new instance');
+      }
+    }
+
     // Pusher 연결
     pusherRef.current = new Pusher(PUSHER_KEY, {
       cluster: PUSHER_CLUSTER,
-      encrypted: true
+      encrypted: true,
+      enabledTransports: ['ws', 'wss'], // WebSocket만 사용
+      disableStats: true, // 통계 비활성화로 성능 향상
+      forceTLS: true
+    });
+
+    // Pusher 연결 상태 모니터링
+    pusherRef.current.connection.bind('state_change', (states) => {
+      console.log('Pusher connection state:', states.current);
     });
 
     // 방 채널 구독
     channelRef.current = pusherRef.current.subscribe(`room-${roomId}`);
     
-    // 미디어 스트림 가져오기
+    return () => {
+      // Pusher 정리
+      if (channelRef.current && pusherRef.current) {
+        pusherRef.current.unsubscribe(`room-${roomId}`);
+        channelRef.current = null;
+      }
+      // Pusher는 컴포넌트 언마운트 시에만 disconnect
+    };
+  }, [roomId]); // roomId만 의존성으로 사용
+
+  // 미디어 스트림 가져오기 (한 번만 실행)
+  useEffect(() => {
+    if (localStream) return; // 이미 스트림이 있으면 재생성하지 않음
+
     navigator.mediaDevices.getUserMedia({ 
       video: true, 
       audio: true 
@@ -136,8 +176,16 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
       }
+    }).catch(err => {
+      console.error('Error accessing media devices:', err);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 빈 의존성 배열로 한 번만 실행
 
+  // Pusher 이벤트 바인딩 (channelRef가 준비된 후)
+  useEffect(() => {
+    if (!channelRef.current || !pusherRef.current) return;
+    
     // 이벤트 핸들러 함수들 정의
     const handleUserJoined = (data) => {
       if (data.existingUsers) {
@@ -232,11 +280,6 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
     channelRef.current.bind('screen-share-stop', handleScreenShareStop);
 
     return () => {
-      // 정리
-      const currentLocalStream = localStream;
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      const currentPeers = peersRef.current;
-      
       // Pusher 이벤트 언바인딩
       if (channelRef.current) {
         channelRef.current.unbind('user-joined');
@@ -247,8 +290,16 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
         channelRef.current.unbind('chat-message');
         channelRef.current.unbind('screen-share-start');
         channelRef.current.unbind('screen-share-stop');
-        pusherRef.current.unsubscribe(`room-${roomId}`);
       }
+    };
+  }, [roomId, userId, createPeer]); // createPeer 변경 시에만 이벤트 재바인딩
+
+  // 컴포넌트 언마운트 시 정리
+  useEffect(() => {
+    return () => {
+      const currentLocalStream = localStream;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const currentPeers = peersRef.current;
       
       if (currentLocalStream) {
         currentLocalStream.getTracks().forEach(track => track.stop());
@@ -257,12 +308,15 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
         screenStreamRef.current.getTracks().forEach(track => track.stop());
       }
       Object.values(currentPeers).forEach(peer => peer.close());
+      
+      // Pusher 최종 정리
       if (pusherRef.current) {
         pusherRef.current.disconnect();
+        pusherRef.current = null;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, userId, createPeer]);
+  }, []); // 컴포넌트 언마운트 시에만 실행
 
   const toggleVideo = () => {
     if (localStream) {
