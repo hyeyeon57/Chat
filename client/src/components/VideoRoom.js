@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import io from 'socket.io-client';
+import Pusher from 'pusher-js';
 import './VideoRoom.css';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const PUSHER_KEY = process.env.REACT_APP_PUSHER_KEY || '';
+const PUSHER_CLUSTER = process.env.REACT_APP_PUSHER_CLUSTER || 'ap3';
 
 const VideoRoom = ({ roomId, userId, onLeave }) => {
   const [peers, setPeers] = useState({});
@@ -14,14 +15,26 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
   const [chatInput, setChatInput] = useState('');
   const [showChat, setShowChat] = useState(false);
   
-  const socketRef = useRef(null);
+  const pusherRef = useRef(null);
+  const channelRef = useRef(null);
   const peersRef = useRef({});
   const localVideoRef = useRef(null);
   const screenStreamRef = useRef(null);
 
   useEffect(() => {
-    // Socket 연결
-    socketRef.current = io(API_URL);
+    if (!PUSHER_KEY) {
+      console.error('Pusher key is not set');
+      return;
+    }
+
+    // Pusher 연결
+    pusherRef.current = new Pusher(PUSHER_KEY, {
+      cluster: PUSHER_CLUSTER,
+      encrypted: true
+    });
+
+    // 방 채널 구독
+    channelRef.current = pusherRef.current.subscribe(`room-${roomId}`);
     
     // 미디어 스트림 가져오기
     navigator.mediaDevices.getUserMedia({ 
@@ -34,41 +47,50 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
       }
     });
 
-    // 방 참가
-    socketRef.current.emit('join-room', roomId, userId);
-
     // 방에 이미 있는 사용자들 받기
-    socketRef.current.on('existing-users', (userIds) => {
-      userIds.forEach((existingUserId) => {
-        if (existingUserId !== userId && !peersRef.current[existingUserId]) {
-          createPeer(existingUserId, true);
-        }
-      });
-    });
-
-    // 다른 사용자 참가
-    socketRef.current.on('user-joined', (newUserId) => {
-      if (newUserId !== userId && !peersRef.current[newUserId]) {
-        createPeer(newUserId, true);
+    channelRef.current.bind('user-joined', (data) => {
+      if (data.existingUsers) {
+        data.existingUsers.forEach((existingUserId) => {
+          if (existingUserId !== userId && !peersRef.current[existingUserId]) {
+            createPeer(existingUserId, true);
+          }
+        });
+      }
+      
+      if (data.userId && data.userId !== userId && !peersRef.current[data.userId]) {
+        createPeer(data.userId, true);
       }
     });
 
     // Offer 수신
-    socketRef.current.on('offer', async ({ offer, from }) => {
+    channelRef.current.bind('offer', async ({ offer, from }) => {
+      if (from === userId) return;
       const peer = createPeer(from, false);
       await peer.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
-      socketRef.current.emit('answer', {
-        answer,
-        roomId,
-        to: from,
-        from: userId
+      
+      // Answer 전송 (API를 통해)
+      fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          channel: `room-${roomId}`,
+          event: 'answer',
+          data: {
+            answer,
+            from: userId,
+            to: from
+          }
+        })
       });
     });
 
     // Answer 수신
-    socketRef.current.on('answer', async ({ answer, from }) => {
+    channelRef.current.bind('answer', async ({ answer, from }) => {
+      if (from === userId) return;
       const peer = peersRef.current[from];
       if (peer) {
         await peer.setRemoteDescription(new RTCSessionDescription(answer));
@@ -76,7 +98,8 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
     });
 
     // ICE candidate 수신
-    socketRef.current.on('ice-candidate', async ({ candidate, from }) => {
+    channelRef.current.bind('ice-candidate', async ({ candidate, from }) => {
+      if (from === userId) return;
       const peer = peersRef.current[from];
       if (peer) {
         await peer.addIceCandidate(new RTCIceCandidate(candidate));
@@ -84,7 +107,7 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
     });
 
     // 사용자 나감
-    socketRef.current.on('user-left', (leftUserId) => {
+    channelRef.current.bind('user-left', (leftUserId) => {
       if (peersRef.current[leftUserId]) {
         peersRef.current[leftUserId].close();
         delete peersRef.current[leftUserId];
@@ -97,17 +120,17 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
     });
 
     // 채팅 메시지 수신
-    socketRef.current.on('chat-message', (data) => {
+    channelRef.current.bind('chat-message', (data) => {
       setChatMessages(prev => [...prev, data]);
     });
 
     // 화면 공유 시작
-    socketRef.current.on('screen-share-start', ({ userId: sharingUserId }) => {
+    channelRef.current.bind('screen-share-start', ({ userId: sharingUserId }) => {
       console.log(`User ${sharingUserId} started screen sharing`);
     });
 
     // 화면 공유 종료
-    socketRef.current.on('screen-share-stop', ({ userId: sharingUserId }) => {
+    channelRef.current.bind('screen-share-stop', ({ userId: sharingUserId }) => {
       console.log(`User ${sharingUserId} stopped screen sharing`);
     });
 
@@ -120,14 +143,19 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
         screenStreamRef.current.getTracks().forEach(track => track.stop());
       }
       Object.values(peersRef.current).forEach(peer => peer.close());
-      socketRef.current.disconnect();
+      if (channelRef.current) {
+        pusherRef.current.unsubscribe(`room-${roomId}`);
+      }
+      if (pusherRef.current) {
+        pusherRef.current.disconnect();
+      }
     };
   }, [roomId, userId]);
 
-  const createPeer = (userId, isInitiator) => {
+  const createPeer = (targetUserId, isInitiator) => {
     // 이미 peer가 존재하면 생성하지 않음
-    if (peersRef.current[userId]) {
-      return peersRef.current[userId];
+    if (peersRef.current[targetUserId]) {
+      return peersRef.current[targetUserId];
     }
 
     const peer = new RTCPeerConnection({
@@ -148,18 +176,27 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
     peer.ontrack = (event) => {
       setPeers(prev => ({
         ...prev,
-        [userId]: event.streams[0]
+        [targetUserId]: event.streams[0]
       }));
     };
 
     // ICE candidate 전송
     peer.onicecandidate = (event) => {
-      if (event.candidate && socketRef.current) {
-        socketRef.current.emit('ice-candidate', {
-          candidate: event.candidate,
-          roomId,
-          to: userId,
-          from: userId
+      if (event.candidate) {
+        fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            channel: `room-${roomId}`,
+            event: 'ice-candidate',
+            data: {
+              candidate: event.candidate,
+              from: userId,
+              to: targetUserId
+            }
+          })
         });
       }
     };
@@ -167,24 +204,31 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
     // 연결 상태 처리
     peer.onconnectionstatechange = () => {
       if (peer.connectionState === 'failed' || peer.connectionState === 'disconnected') {
-        console.log(`Connection with ${userId} failed or disconnected`);
+        console.log(`Connection with ${targetUserId} failed or disconnected`);
       }
     };
 
-    peersRef.current[userId] = peer;
+    peersRef.current[targetUserId] = peer;
 
     // Offer 생성 (초기화자인 경우)
     if (isInitiator) {
       peer.createOffer().then(offer => {
         peer.setLocalDescription(offer).then(() => {
-          if (socketRef.current) {
-            socketRef.current.emit('offer', {
-              offer,
-              roomId,
-              to: userId,
-              from: userId
-            });
-          }
+          fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              channel: `room-${roomId}`,
+              event: 'offer',
+              data: {
+                offer,
+                from: userId,
+                to: targetUserId
+              }
+            })
+          });
         }).catch(err => console.error('Error setting local description:', err));
       }).catch(err => console.error('Error creating offer:', err));
     }
@@ -223,8 +267,8 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
         screenStreamRef.current = screenStream;
         
         // 모든 peer에 화면 스트림 전송
-        Object.keys(peersRef.current).forEach(userId => {
-          const peer = peersRef.current[userId];
+        Object.keys(peersRef.current).forEach(targetUserId => {
+          const peer = peersRef.current[targetUserId];
           const sender = peer.getSenders().find(s => 
             s.track && s.track.kind === 'video'
           );
@@ -239,7 +283,17 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
         }
 
         setIsScreenSharing(true);
-        socketRef.current.emit('screen-share-start', { roomId, userId });
+        fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            channel: `room-${roomId}`,
+            event: 'screen-share-start',
+            data: { userId }
+          })
+        });
 
         // 화면 공유 종료 감지
         screenStream.getVideoTracks()[0].onended = () => {
@@ -261,8 +315,8 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
 
     // 원래 비디오 스트림으로 복원
     if (localStream) {
-      Object.keys(peersRef.current).forEach(userId => {
-        const peer = peersRef.current[userId];
+      Object.keys(peersRef.current).forEach(targetUserId => {
+        const peer = peersRef.current[targetUserId];
         const sender = peer.getSenders().find(s => 
           s.track && s.track.kind === 'video'
         );
@@ -277,16 +331,37 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
     }
 
     setIsScreenSharing(false);
-    socketRef.current.emit('screen-share-stop', { roomId, userId });
+    fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        channel: `room-${roomId}`,
+        event: 'screen-share-stop',
+        data: { userId }
+      })
+    });
   };
 
   const sendMessage = (e) => {
     e.preventDefault();
     if (chatInput.trim()) {
-      socketRef.current.emit('chat-message', {
-        roomId,
-        userId,
-        message: chatInput.trim()
+      fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          channel: `room-${roomId}`,
+          event: 'chat-message',
+          data: {
+            roomId,
+            userId,
+            message: chatInput.trim(),
+            timestamp: new Date().toISOString()
+          }
+        })
       });
       setChatInput('');
     }
@@ -300,7 +375,20 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
       screenStreamRef.current.getTracks().forEach(track => track.stop());
     }
     Object.values(peersRef.current).forEach(peer => peer.close());
-    socketRef.current.disconnect();
+    fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        channel: `room-${roomId}`,
+        event: 'user-left',
+        data: { userId }
+      })
+    });
+    if (pusherRef.current) {
+      pusherRef.current.disconnect();
+    }
     onLeave();
   };
 
@@ -413,4 +501,3 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
 };
 
 export default VideoRoom;
-

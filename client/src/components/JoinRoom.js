@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import io from 'socket.io-client';
 import './JoinRoom.css';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_URL = process.env.REACT_APP_API_URL || '';
 
 function JoinRoom({ onJoin, userName, onLogout }) {
   const { roomId: urlRoomId } = useParams();
@@ -13,22 +12,13 @@ function JoinRoom({ onJoin, userName, onLogout }) {
   const [roomLink, setRoomLink] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const socketRef = React.useRef(null);
 
   useEffect(() => {
-    socketRef.current = io(API_URL);
-    
     // URL에서 roomId가 있으면 자동으로 참가 모드로 설정
     if (urlRoomId) {
       setMode('join');
       setRoomId(urlRoomId);
     }
-    
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-      }
-    };
   }, [urlRoomId]);
 
   const handleCreateRoom = async (e) => {
@@ -36,17 +26,33 @@ function JoinRoom({ onJoin, userName, onLogout }) {
     setError('');
     setLoading(true);
 
-    socketRef.current.emit('create-room', userName, password || null, (response) => {
-      if (response.success) {
-        const link = `${window.location.origin}/join/${response.roomId}`;
+    try {
+      const response = await fetch(`${API_URL}/api/rooms/create`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: userName,
+          password: password || null
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        const link = `${window.location.origin}/join/${data.roomId}`;
         setRoomLink(link);
-        setRoomId(response.roomId);
-        setLoading(false);
+        setRoomId(data.roomId);
       } else {
-        setError('방 생성에 실패했습니다.');
-        setLoading(false);
+        setError(data.message || '방 생성에 실패했습니다.');
       }
-    });
+    } catch (error) {
+      console.error('Create room error:', error);
+      setError('방 생성에 실패했습니다.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleJoinRoom = async (e) => {
@@ -67,8 +73,11 @@ function JoinRoom({ onJoin, userName, onLogout }) {
       actualRoomId = match[1];
     }
 
-    // 방 정보 확인
-    socketRef.current.emit('get-room-info', actualRoomId, (roomInfo) => {
+    try {
+      // 방 정보 확인
+      const infoResponse = await fetch(`${API_URL}/api/rooms/info?roomId=${actualRoomId}`);
+      const roomInfo = await infoResponse.json();
+
       if (!roomInfo.success) {
         setError(roomInfo.message);
         setLoading(false);
@@ -83,15 +92,31 @@ function JoinRoom({ onJoin, userName, onLogout }) {
       }
 
       // 방 참가
-      socketRef.current.emit('join-room', actualRoomId, userName, password || null, (response) => {
-        if (response.success) {
-          onJoin(actualRoomId, userName);
-        } else {
-          setError(response.message);
-          setLoading(false);
-        }
+      const joinResponse = await fetch(`${API_URL}/api/rooms/join`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          roomId: actualRoomId,
+          userId: userName,
+          password: password || null
+        })
       });
-    });
+
+      const joinData = await joinResponse.json();
+      
+      if (joinData.success) {
+        onJoin(actualRoomId, userName);
+      } else {
+        setError(joinData.message);
+      }
+    } catch (error) {
+      console.error('Join room error:', error);
+      setError('방 참가에 실패했습니다.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleCopyLink = () => {
