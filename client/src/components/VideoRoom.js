@@ -261,6 +261,7 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
         pusherRef.current.disconnect();
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, userId, createPeer]);
 
   const toggleVideo = () => {
