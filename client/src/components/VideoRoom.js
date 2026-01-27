@@ -49,24 +49,31 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
       }));
     };
 
-    // ICE candidate 전송
+    // ICE candidate 전송 (디바운싱)
+    let iceCandidateTimeout = null;
     peer.onicecandidate = (event) => {
       if (event.candidate) {
-        fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            channel: `room-${roomId}`,
-            event: 'ice-candidate',
-            data: {
-              candidate: event.candidate,
-              from: userId,
-              to: targetUserId
-            }
-          })
-        });
+        // 디바운싱: 100ms마다 한 번만 전송
+        if (iceCandidateTimeout) {
+          clearTimeout(iceCandidateTimeout);
+        }
+        iceCandidateTimeout = setTimeout(() => {
+          fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              channel: `room-${roomId}`,
+              event: 'ice-candidate',
+              data: {
+                candidate: event.candidate,
+                from: userId,
+                to: targetUserId
+              }
+            })
+          }).catch(err => console.error('ICE candidate send error:', err));
+        }, 100);
       }
     };
 
@@ -131,8 +138,8 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
       }
     });
 
-    // 방에 이미 있는 사용자들 받기
-    channelRef.current.bind('user-joined', (data) => {
+    // 이벤트 핸들러 함수들 정의
+    const handleUserJoined = (data) => {
       if (data.existingUsers) {
         data.existingUsers.forEach((existingUserId) => {
           if (existingUserId !== userId && !peersRef.current[existingUserId]) {
@@ -144,17 +151,15 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
       if (data.userId && data.userId !== userId && !peersRef.current[data.userId]) {
         createPeer(data.userId, true);
       }
-    });
+    };
 
-    // Offer 수신
-    channelRef.current.bind('offer', async ({ offer, from }) => {
+    const handleOffer = async ({ offer, from }) => {
       if (from === userId) return;
       const peer = createPeer(from, false);
       await peer.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
       
-      // Answer 전송 (API를 통해)
       fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
         method: 'POST',
         headers: {
@@ -169,29 +174,30 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
             to: from
           }
         })
-      });
-    });
+      }).catch(err => console.error('Answer send error:', err));
+    };
 
-    // Answer 수신
-    channelRef.current.bind('answer', async ({ answer, from }) => {
+    const handleAnswer = async ({ answer, from }) => {
       if (from === userId) return;
       const peer = peersRef.current[from];
       if (peer) {
         await peer.setRemoteDescription(new RTCSessionDescription(answer));
       }
-    });
+    };
 
-    // ICE candidate 수신
-    channelRef.current.bind('ice-candidate', async ({ candidate, from }) => {
+    const handleIceCandidate = async ({ candidate, from }) => {
       if (from === userId) return;
       const peer = peersRef.current[from];
-      if (peer) {
-        await peer.addIceCandidate(new RTCIceCandidate(candidate));
+      if (peer && candidate) {
+        try {
+          await peer.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (err) {
+          console.error('ICE candidate add error:', err);
+        }
       }
-    });
+    };
 
-    // 사용자 나감
-    channelRef.current.bind('user-left', (leftUserId) => {
+    const handleUserLeft = (leftUserId) => {
       if (peersRef.current[leftUserId]) {
         peersRef.current[leftUserId].close();
         delete peersRef.current[leftUserId];
@@ -201,28 +207,48 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
           return newPeers;
         });
       }
-    });
+    };
 
-    // 채팅 메시지 수신
-    channelRef.current.bind('chat-message', (data) => {
+    const handleChatMessage = (data) => {
       setChatMessages(prev => [...prev, data]);
-    });
+    };
 
-    // 화면 공유 시작
-    channelRef.current.bind('screen-share-start', ({ userId: sharingUserId }) => {
+    const handleScreenShareStart = ({ userId: sharingUserId }) => {
       console.log(`User ${sharingUserId} started screen sharing`);
-    });
+    };
 
-    // 화면 공유 종료
-    channelRef.current.bind('screen-share-stop', ({ userId: sharingUserId }) => {
+    const handleScreenShareStop = ({ userId: sharingUserId }) => {
       console.log(`User ${sharingUserId} stopped screen sharing`);
-    });
+    };
+
+    // 이벤트 바인딩
+    channelRef.current.bind('user-joined', handleUserJoined);
+    channelRef.current.bind('offer', handleOffer);
+    channelRef.current.bind('answer', handleAnswer);
+    channelRef.current.bind('ice-candidate', handleIceCandidate);
+    channelRef.current.bind('user-left', handleUserLeft);
+    channelRef.current.bind('chat-message', handleChatMessage);
+    channelRef.current.bind('screen-share-start', handleScreenShareStart);
+    channelRef.current.bind('screen-share-stop', handleScreenShareStop);
 
     return () => {
       // 정리
       const currentLocalStream = localStream;
       // eslint-disable-next-line react-hooks/exhaustive-deps
       const currentPeers = peersRef.current;
+      
+      // Pusher 이벤트 언바인딩
+      if (channelRef.current) {
+        channelRef.current.unbind('user-joined');
+        channelRef.current.unbind('offer');
+        channelRef.current.unbind('answer');
+        channelRef.current.unbind('ice-candidate');
+        channelRef.current.unbind('user-left');
+        channelRef.current.unbind('chat-message');
+        channelRef.current.unbind('screen-share-start');
+        channelRef.current.unbind('screen-share-stop');
+        pusherRef.current.unsubscribe(`room-${roomId}`);
+      }
       
       if (currentLocalStream) {
         currentLocalStream.getTracks().forEach(track => track.stop());
@@ -231,14 +257,11 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
         screenStreamRef.current.getTracks().forEach(track => track.stop());
       }
       Object.values(currentPeers).forEach(peer => peer.close());
-      if (channelRef.current) {
-        pusherRef.current.unsubscribe(`room-${roomId}`);
-      }
       if (pusherRef.current) {
         pusherRef.current.disconnect();
       }
     };
-  }, [roomId, userId, createPeer, localStream]);
+  }, [roomId, userId, createPeer]);
 
   const toggleVideo = () => {
     if (localStream) {
