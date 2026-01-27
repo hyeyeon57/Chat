@@ -30,7 +30,10 @@ function Login({ onLogin }) {
 
     try {
       const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
-      const response = await fetch(`${API_URL}${endpoint}`, {
+      const url = `${API_URL}${endpoint}`;
+      console.log('API Request:', url, formData);
+      
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -38,10 +41,15 @@ function Login({ onLogin }) {
         body: JSON.stringify(formData)
       });
 
+      console.log('Response status:', response.status, response.statusText);
+      console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+
       // 응답이 비어있는지 확인
       const text = await response.text();
+      console.log('Response text:', text);
+      
       if (!text) {
-        throw new Error('서버 응답이 비어있습니다.');
+        throw new Error(`서버 응답이 비어있습니다. (Status: ${response.status})`);
       }
 
       let data;
@@ -52,7 +60,15 @@ function Login({ onLogin }) {
         throw new Error('서버 응답을 파싱할 수 없습니다.');
       }
 
+      // data가 유효한지 확인
+      if (!data || typeof data !== 'object') {
+        throw new Error('서버 응답 형식이 올바르지 않습니다.');
+      }
+
       if (data.success) {
+        if (!data.token || !data.user) {
+          throw new Error('서버 응답에 필요한 데이터가 없습니다.');
+        }
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(data.user));
         if (autoLogin) {
