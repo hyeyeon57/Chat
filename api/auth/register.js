@@ -8,7 +8,7 @@ module.exports = allowCors(async (req, res) => {
   }
 
   try {
-    const { email, password, name } = req.body;
+    const { email, password, name } = req.body || {};
 
     // 유효성 검사
     if (!email || !password || !name) {

@@ -12,7 +12,18 @@ const allowCors = (fn) => async (req, res) => {
     return;
   }
   
-  return await fn(req, res);
+  try {
+    return await fn(req, res);
+  } catch (error) {
+    console.error('CORS wrapper error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: '서버 오류가 발생했습니다.',
+        error: error.message
+      });
+    }
+  }
 };
 
 module.exports = allowCors;

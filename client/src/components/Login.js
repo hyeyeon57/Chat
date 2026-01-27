@@ -38,7 +38,19 @@ function Login({ onLogin }) {
         body: JSON.stringify(formData)
       });
 
-      const data = await response.json();
+      // 응답이 비어있는지 확인
+      const text = await response.text();
+      if (!text) {
+        throw new Error('서버 응답이 비어있습니다.');
+      }
+
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError, 'Response text:', text);
+        throw new Error('서버 응답을 파싱할 수 없습니다.');
+      }
 
       if (data.success) {
         localStorage.setItem('token', data.token);
@@ -51,8 +63,8 @@ function Login({ onLogin }) {
         setError(data.message || '오류가 발생했습니다.');
       }
     } catch (error) {
-      setError('서버에 연결할 수 없습니다.');
       console.error('Login error:', error);
+      setError(error.message || '서버에 연결할 수 없습니다.');
     } finally {
       setLoading(false);
     }
