@@ -221,6 +221,7 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
     return () => {
       // 정리
       const currentLocalStream = localStream;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       const currentPeers = peersRef.current;
       
       if (currentLocalStream) {
