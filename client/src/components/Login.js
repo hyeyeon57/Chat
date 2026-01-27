@@ -205,12 +205,12 @@ function Login({ onLogin }) {
         <div className="footer">
           <p>ZOOM-IN과 함께, 더 자신 있는 면접을 경험해보세요.</p>
           <div className="footer-links">
-            <a href="#" onClick={(e) => { e.preventDefault(); alert('이용약관'); }}>
+            <button type="button" className="footer-link-btn" onClick={() => alert('이용약관')}>
               이용약관
-            </a>
-            <a href="#" onClick={(e) => { e.preventDefault(); alert('개인정보처리방침'); }}>
+            </button>
+            <button type="button" className="footer-link-btn" onClick={() => alert('개인정보처리방침')}>
               개인정보처리방침
-            </a>
+            </button>
           </div>
         </div>
       </div>

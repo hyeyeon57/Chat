@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Pusher from 'pusher-js';
 import './VideoRoom.css';
 
@@ -20,6 +20,90 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
   const peersRef = useRef({});
   const localVideoRef = useRef(null);
   const screenStreamRef = useRef(null);
+
+  const createPeer = useCallback((targetUserId, isInitiator) => {
+    // 이미 peer가 존재하면 생성하지 않음
+    if (peersRef.current[targetUserId]) {
+      return peersRef.current[targetUserId];
+    }
+
+    const peer = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ]
+    });
+
+    // 로컬 스트림 추가
+    if (localStream) {
+      localStream.getTracks().forEach(track => {
+        peer.addTrack(track, localStream);
+      });
+    }
+
+    // 원격 스트림 처리
+    peer.ontrack = (event) => {
+      setPeers(prev => ({
+        ...prev,
+        [targetUserId]: event.streams[0]
+      }));
+    };
+
+    // ICE candidate 전송
+    peer.onicecandidate = (event) => {
+      if (event.candidate) {
+        fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            channel: `room-${roomId}`,
+            event: 'ice-candidate',
+            data: {
+              candidate: event.candidate,
+              from: userId,
+              to: targetUserId
+            }
+          })
+        });
+      }
+    };
+
+    // 연결 상태 처리
+    peer.onconnectionstatechange = () => {
+      if (peer.connectionState === 'failed' || peer.connectionState === 'disconnected') {
+        console.log(`Connection with ${targetUserId} failed or disconnected`);
+      }
+    };
+
+    peersRef.current[targetUserId] = peer;
+
+    // Offer 생성 (초기화자인 경우)
+    if (isInitiator) {
+      peer.createOffer().then(offer => {
+        peer.setLocalDescription(offer).then(() => {
+          fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              channel: `room-${roomId}`,
+              event: 'offer',
+              data: {
+                offer,
+                from: userId,
+                to: targetUserId
+              }
+            })
+          });
+        }).catch(err => console.error('Error setting local description:', err));
+      }).catch(err => console.error('Error creating offer:', err));
+    }
+
+    return peer;
+  }, [roomId, userId, localStream]);
 
   useEffect(() => {
     if (!PUSHER_KEY) {
@@ -136,13 +220,16 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
 
     return () => {
       // 정리
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
+      const currentLocalStream = localStream;
+      const currentPeers = peersRef.current;
+      
+      if (currentLocalStream) {
+        currentLocalStream.getTracks().forEach(track => track.stop());
       }
       if (screenStreamRef.current) {
         screenStreamRef.current.getTracks().forEach(track => track.stop());
       }
-      Object.values(peersRef.current).forEach(peer => peer.close());
+      Object.values(currentPeers).forEach(peer => peer.close());
       if (channelRef.current) {
         pusherRef.current.unsubscribe(`room-${roomId}`);
       }
@@ -150,91 +237,7 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
         pusherRef.current.disconnect();
       }
     };
-  }, [roomId, userId]);
-
-  const createPeer = (targetUserId, isInitiator) => {
-    // 이미 peer가 존재하면 생성하지 않음
-    if (peersRef.current[targetUserId]) {
-      return peersRef.current[targetUserId];
-    }
-
-    const peer = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-      ]
-    });
-
-    // 로컬 스트림 추가
-    if (localStream) {
-      localStream.getTracks().forEach(track => {
-        peer.addTrack(track, localStream);
-      });
-    }
-
-    // 원격 스트림 처리
-    peer.ontrack = (event) => {
-      setPeers(prev => ({
-        ...prev,
-        [targetUserId]: event.streams[0]
-      }));
-    };
-
-    // ICE candidate 전송
-    peer.onicecandidate = (event) => {
-      if (event.candidate) {
-        fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            channel: `room-${roomId}`,
-            event: 'ice-candidate',
-            data: {
-              candidate: event.candidate,
-              from: userId,
-              to: targetUserId
-            }
-          })
-        });
-      }
-    };
-
-    // 연결 상태 처리
-    peer.onconnectionstatechange = () => {
-      if (peer.connectionState === 'failed' || peer.connectionState === 'disconnected') {
-        console.log(`Connection with ${targetUserId} failed or disconnected`);
-      }
-    };
-
-    peersRef.current[targetUserId] = peer;
-
-    // Offer 생성 (초기화자인 경우)
-    if (isInitiator) {
-      peer.createOffer().then(offer => {
-        peer.setLocalDescription(offer).then(() => {
-          fetch(`${process.env.REACT_APP_API_URL || ''}/api/pusher/trigger`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              channel: `room-${roomId}`,
-              event: 'offer',
-              data: {
-                offer,
-                from: userId,
-                to: targetUserId
-              }
-            })
-          });
-        }).catch(err => console.error('Error setting local description:', err));
-      }).catch(err => console.error('Error creating offer:', err));
-    }
-
-    return peer;
-  };
+  }, [roomId, userId, createPeer, localStream]);
 
   const toggleVideo = () => {
     if (localStream) {
