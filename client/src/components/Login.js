@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import './Login.css';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_URL = process.env.REACT_APP_API_URL || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5000');
 
 function Login({ onLogin }) {
   const [isLogin, setIsLogin] = useState(true);

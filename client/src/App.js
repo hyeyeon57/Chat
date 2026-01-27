@@ -6,7 +6,7 @@ import AuthCallback from './components/AuthCallback';
 import VideoRoom from './components/VideoRoom';
 import JoinRoom from './components/JoinRoom';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_URL = process.env.REACT_APP_API_URL || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5000');
 
 function App() {
   const [user, setUser] = useState(null);
