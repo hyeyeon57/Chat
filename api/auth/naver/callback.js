@@ -1,6 +1,6 @@
 const allowCors = require('../_utils/cors');
 const { generateToken } = require('../_utils/auth');
-const User = require('../../../server/models/User');
+const User = require('../_utils/users');
 
 module.exports = allowCors(async (req, res) => {
   if (req.method !== 'GET') {

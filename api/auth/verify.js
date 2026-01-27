@@ -1,6 +1,6 @@
 const allowCors = require('../_utils/cors');
 const { verifyToken } = require('../_utils/auth');
-const User = require('../../server/models/User');
+const User = require('../_utils/users');
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
