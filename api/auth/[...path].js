@@ -1,6 +1,9 @@
 const allowCors = require('../_utils/cors');
 const { generateToken } = require('../_utils/auth');
-const User = require('../_utils/users');
+// MongoDB가 설정되어 있으면 MongoDB 사용, 없으면 메모리 저장소 사용
+const UserMongo = require('../_utils/users-mongo');
+const UserMemory = require('../_utils/users');
+const User = process.env.MONGODB_URI ? UserMongo : UserMemory;
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';

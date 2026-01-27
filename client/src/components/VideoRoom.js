@@ -43,10 +43,15 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
 
     // 원격 스트림 처리
     peer.ontrack = (event) => {
-      setPeers(prev => ({
-        ...prev,
-        [targetUserId]: event.streams[0]
-      }));
+      console.log('Received track from:', targetUserId, event.streams);
+      if (event.streams && event.streams[0]) {
+        setPeers(prev => {
+          const newPeers = { ...prev };
+          newPeers[targetUserId] = event.streams[0];
+          console.log('Updated peers:', Object.keys(newPeers));
+          return newPeers;
+        });
+      }
     };
 
     // ICE candidate 전송 (디바운싱)
@@ -546,21 +551,31 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
           <div className="video-label">{userId} (나)</div>
         </div>
 
-        {peerEntries.map(([peerUserId, stream]) => (
-          <div key={peerUserId} className="video-container remote">
-            <video
-              autoPlay
-              playsInline
-              className="video-element"
-              ref={(videoElement) => {
-                if (videoElement && stream) {
-                  videoElement.srcObject = stream;
-                }
-              }}
-            />
-            <div className="video-label">{peerUserId}</div>
-          </div>
-        ))}
+        {peerEntries.map(([peerUserId, stream]) => {
+          console.log('Rendering peer video:', peerUserId, stream);
+          return (
+            <div key={peerUserId} className="video-container remote">
+              <video
+                autoPlay
+                playsInline
+                className="video-element"
+                ref={(videoElement) => {
+                  if (videoElement && stream) {
+                    console.log('Setting video srcObject for:', peerUserId);
+                    videoElement.srcObject = stream;
+                    // 스트림이 변경될 때마다 다시 설정
+                    videoElement.onloadedmetadata = () => {
+                      videoElement.play().catch(err => {
+                        console.error('Error playing video:', err);
+                      });
+                    };
+                  }
+                }}
+              />
+              <div className="video-label">{peerUserId}</div>
+            </div>
+          );
+        })}
       </div>
 
       <div className="controls">
