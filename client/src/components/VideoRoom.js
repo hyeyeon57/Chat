@@ -182,27 +182,67 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // 빈 의존성 배열로 한 번만 실행
 
+  // 방 참가 시 기존 사용자들과 연결 시작
+  useEffect(() => {
+    if (!localStream || !channelRef.current) return;
+
+    // 방 정보 가져오기
+    const API_URL = process.env.REACT_APP_API_URL || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5000');
+    fetch(`${API_URL}/api/rooms/info?roomId=${roomId}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.users) {
+          console.log('Room info loaded, existing users:', data.users);
+          data.users.forEach((existingUserId) => {
+            if (existingUserId !== userId && !peersRef.current[existingUserId]) {
+              console.log('Connecting to existing user:', existingUserId);
+              createPeer(existingUserId, true);
+            }
+          });
+        }
+      })
+      .catch(err => console.error('Error fetching room info:', err));
+  }, [localStream, roomId, userId, createPeer]);
+
   // Pusher 이벤트 바인딩 (channelRef가 준비된 후)
   useEffect(() => {
     if (!channelRef.current || !pusherRef.current) return;
     
     // 이벤트 핸들러 함수들 정의
     const handleUserJoined = (data) => {
-      if (data.existingUsers) {
+      console.log('User joined event:', data, 'Current userId:', userId);
+      
+      // 새로 참가한 사용자가 나 자신인 경우 (기존 사용자들에게 연결 시작)
+      if (data.userId === userId && data.existingUsers) {
+        console.log('I joined, connecting to existing users:', data.existingUsers);
         data.existingUsers.forEach((existingUserId) => {
           if (existingUserId !== userId && !peersRef.current[existingUserId]) {
+            console.log('Creating peer for existing user:', existingUserId);
             createPeer(existingUserId, true);
           }
         });
       }
-      
-      if (data.userId && data.userId !== userId && !peersRef.current[data.userId]) {
+      // 다른 사용자가 참가한 경우 (새 사용자에게 연결 시작)
+      else if (data.userId && data.userId !== userId && !peersRef.current[data.userId]) {
+        console.log('New user joined, creating peer:', data.userId);
         createPeer(data.userId, true);
+      }
+      // 기존 사용자 목록이 있는 경우 (백업 로직)
+      else if (data.existingUsers) {
+        data.existingUsers.forEach((existingUserId) => {
+          if (existingUserId !== userId && !peersRef.current[existingUserId]) {
+            console.log('Creating peer for existing user (backup):', existingUserId);
+            createPeer(existingUserId, true);
+          }
+        });
       }
     };
 
-    const handleOffer = async ({ offer, from }) => {
-      if (from === userId) return;
+    const handleOffer = async ({ offer, from, to }) => {
+      // 자신이 보낸 offer이거나, 자신에게 오지 않은 offer는 무시
+      if (from === userId || (to && to !== userId)) return;
+      
+      console.log('Received offer from:', from, 'to:', to || 'all');
       const peer = createPeer(from, false);
       await peer.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await peer.createAnswer();
@@ -225,16 +265,21 @@ const VideoRoom = ({ roomId, userId, onLeave }) => {
       }).catch(err => console.error('Answer send error:', err));
     };
 
-    const handleAnswer = async ({ answer, from }) => {
-      if (from === userId) return;
+    const handleAnswer = async ({ answer, from, to }) => {
+      // 자신이 보낸 answer이거나, 자신에게 오지 않은 answer는 무시
+      if (from === userId || (to && to !== userId)) return;
+      
+      console.log('Received answer from:', from, 'to:', to || 'all');
       const peer = peersRef.current[from];
       if (peer) {
         await peer.setRemoteDescription(new RTCSessionDescription(answer));
       }
     };
 
-    const handleIceCandidate = async ({ candidate, from }) => {
-      if (from === userId) return;
+    const handleIceCandidate = async ({ candidate, from, to }) => {
+      // 자신이 보낸 candidate이거나, 자신에게 오지 않은 candidate는 무시
+      if (from === userId || (to && to !== userId)) return;
+      
       const peer = peersRef.current[from];
       if (peer && candidate) {
         try {
