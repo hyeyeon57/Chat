@@ -1,6 +1,8 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+// MongoDB 사용자 모델 (환경변수가 설정되어 있으면 사용)
+const UserMongo = process.env.MONGODB_URI ? require('../api/_utils/users-mongo') : null;
 const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
@@ -173,6 +175,53 @@ router.get('/verify', async (req, res) => {
     res.status(401).json({ 
       success: false, 
       message: '유효하지 않은 토큰입니다.' 
+    });
+  }
+});
+
+// 사용자 목록 조회 (개발/관리용)
+router.get('/users', async (req, res) => {
+  try {
+    // MongoDB가 설정되어 있으면 MongoDB 사용, 없으면 파일 기반 사용
+    const UserModel = UserMongo || User;
+    
+    // MongoDB를 사용하는 경우 findAll 메서드 사용
+    if (UserMongo) {
+      const users = await UserMongo.findAll();
+      return res.json({
+        success: true,
+        count: users.length,
+        users: users
+      });
+    } else {
+      // 파일 기반인 경우 (기존 로직)
+      const fs = require('fs');
+      const path = require('path');
+      const USERS_FILE = path.join(__dirname, '../data/users.json');
+      
+      let users = [];
+      if (fs.existsSync(USERS_FILE)) {
+        const data = fs.readFileSync(USERS_FILE, 'utf8');
+        users = JSON.parse(data);
+      }
+      
+      // 비밀번호 제거
+      const usersWithoutPassword = users.map(user => {
+        const { password, ...userWithoutPassword } = user;
+        return userWithoutPassword;
+      });
+      
+      return res.json({
+        success: true,
+        count: usersWithoutPassword.length,
+        users: usersWithoutPassword
+      });
+    }
+  } catch (error) {
+    console.error('Get users error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: '사용자 목록을 가져오는 중 오류가 발생했습니다.' 
     });
   }
 });

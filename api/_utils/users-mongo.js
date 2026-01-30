@@ -133,6 +133,27 @@ class User {
     if (!hashedPassword) return false;
     return await bcrypt.compare(plainPassword, hashedPassword);
   }
+
+  static async findAll() {
+    try {
+      await connectDB();
+      const users = await UserModel.find({}).select('-password').sort({ createdAt: -1 });
+      return users;
+    } catch (error) {
+      console.error('findAll error:', error);
+      return [];
+    }
+  }
+
+  static async count() {
+    try {
+      await connectDB();
+      return await UserModel.countDocuments({});
+    } catch (error) {
+      console.error('count error:', error);
+      return 0;
+    }
+  }
 }
 
 module.exports = User;

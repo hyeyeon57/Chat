@@ -34,15 +34,21 @@ const handler = async (req, res) => {
       const roomId = Math.random().toString(36).substring(2, 11);
       const room = createRoom(roomId, userId, password || null);
 
+      // 방 생성 시 생성한 사용자도 방에 추가 (이미 createRoom에서 추가됨)
+      // 참가자 수와 함께 응답
       await pusher.trigger(`room-${roomId}`, 'room-created', {
         roomId,
-        host: userId
+        host: userId,
+        userCount: room.users.size,
+        allUsers: Array.from(room.users)
       });
 
       res.json({
         success: true,
         roomId,
-        message: '방이 생성되었습니다.'
+        message: '방이 생성되었습니다.',
+        userCount: room.users.size,
+        allUsers: Array.from(room.users)
       });
       return;
     } catch (error) {
@@ -89,17 +95,25 @@ const handler = async (req, res) => {
       }
 
       joinRoom(roomId, userId);
-
-      const existingUsers = Array.from(room.users).filter(id => id !== userId);
+      
+      // 업데이트된 방 정보 가져오기
+      const updatedRoom = getRoom(roomId);
+      const existingUsers = Array.from(updatedRoom.users).filter(id => id !== userId);
+      
+      // 모든 참가자에게 사용자 참가 알림 (참가자 수 업데이트 포함)
       await pusher.trigger(`room-${roomId}`, 'user-joined', {
         userId,
-        existingUsers
+        existingUsers,
+        userCount: updatedRoom.users.size,
+        allUsers: Array.from(updatedRoom.users)
       });
 
       res.json({
         success: true,
         message: '방에 참가했습니다.',
-        existingUsers
+        existingUsers,
+        userCount: updatedRoom.users.size,
+        allUsers: Array.from(updatedRoom.users)
       });
       return;
     } catch (error) {
@@ -108,6 +122,51 @@ const handler = async (req, res) => {
         res.status(500).json({ 
           success: false, 
           message: '방 참가에 실패했습니다.' 
+        });
+      }
+      return;
+    }
+  }
+
+  // 방 나가기
+  if (route === 'leave' && req.method === 'POST') {
+    try {
+      const { roomId, userId } = req.body;
+
+      if (!roomId || !userId) {
+        res.status(400).json({ 
+          success: false, 
+          message: '방 ID와 사용자 ID가 필요합니다.' 
+        });
+        return;
+      }
+
+      const { leaveRoom } = require('../_utils/rooms');
+      leaveRoom(roomId, userId);
+      
+      // 업데이트된 방 정보 가져오기
+      const updatedRoom = getRoom(roomId);
+      const userCount = updatedRoom ? updatedRoom.users.size : 0;
+      
+      // 모든 참가자에게 사용자 나가기 알림
+      await pusher.trigger(`room-${roomId}`, 'user-left', {
+        userId,
+        userCount,
+        allUsers: updatedRoom ? Array.from(updatedRoom.users) : []
+      });
+
+      res.json({
+        success: true,
+        message: '방에서 나갔습니다.',
+        userCount
+      });
+      return;
+    } catch (error) {
+      console.error('Leave room error:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          success: false, 
+          message: '방 나가기에 실패했습니다.' 
         });
       }
       return;

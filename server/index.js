@@ -6,6 +6,7 @@ const cors = require('cors');
 const path = require('path');
 const session = require('express-session');
 const passport = require('./config/passport');
+const connectDB = require('../api/_utils/db');
 
 const app = express();
 const server = http.createServer(app);
@@ -176,6 +177,13 @@ io.on('connection', (socket) => {
       }
     });
   });
+});
+
+// MongoDB 연결 초기화
+connectDB().then(() => {
+  console.log('MongoDB 연결 준비 완료');
+}).catch((err) => {
+  console.error('MongoDB 연결 오류:', err);
 });
 
 const PORT = process.env.PORT || 5000;

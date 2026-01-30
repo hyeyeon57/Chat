@@ -442,6 +442,26 @@ const handler = async (req, res) => {
     }
   }
 
+  // 사용자 목록 조회 (개발/관리용 - 프로덕션에서는 인증 필요)
+  if (route === 'users' && req.method === 'GET') {
+    try {
+      const users = await User.findAll();
+      res.json({
+        success: true,
+        count: users.length,
+        users: users
+      });
+      return;
+    } catch (error) {
+      console.error('Get users error:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: '사용자 목록을 가져오는 중 오류가 발생했습니다.' 
+      });
+      return;
+    }
+  }
+
   // 경로를 찾을 수 없음
   res.status(404).json({ success: false, message: 'Not found' });
 };
